@@ -11,3 +11,7 @@ cmake pkg-config 会设置一下变量
 <XPREFIX> = <PREFIX>_STATIC for static linking
 
 include_directoies不能写在add_executable的后面??
+
+cmake使用pkg-config查找库的，mac上openssl的pc文件都不在标准目录，所以需要设置
+export PKG_CONFIG_PATH=/Users/liuye/Downloads/pjproject-2.7.2/mac/lib/pkgconfig
+export PKG_CONFIG_PATH=/usr/local/Cellar/openssl/1.0.2n/lib/pkgconfig:$PKG_CONFIG_PATH
