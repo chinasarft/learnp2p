@@ -4,4 +4,4 @@ project(learnp2p)
 
 add_subdirectory(src/pjsip)
 add_subdirectory(src/pjstream)
-add_subdirectory(src/siprtc)
+add_subdirectory(src/siprtp)
