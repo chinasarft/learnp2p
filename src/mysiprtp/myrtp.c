@@ -184,11 +184,10 @@ int librtp_put_video(RtpMediaStream * s, char * data, int dataSize){
 int librtp_put_audio(RtpMediaStream * strm, char * data, int dataSize){
     enum { RTCP_INTERVAL = 5000, RTCP_RAND = 2000 };
     char packet[1500];
-    unsigned msec_interval;
+    unsigned msec_interval = 20;
     
     if(strm->time_inited == 0){
         strm->time_inited = 1;
-        msec_interval = 20;
         pj_get_timestamp_freq(&strm->freq);
         
         pj_get_timestamp(&strm->next_rtp);
@@ -198,23 +197,38 @@ int librtp_put_audio(RtpMediaStream * strm, char * data, int dataSize){
         strm->next_rtcp.u64 += (strm->freq.u64 * (RTCP_INTERVAL+(pj_rand()%RTCP_RAND)) / 1000);
     }
     
-    
-    pj_timestamp now, lesser;
-    pj_time_val timeout;
-    pj_bool_t send_rtp, send_rtcp;
-    
-    send_rtp = send_rtcp = PJ_FALSE;
-    
-    /* Determine how long to sleep */
-    if (strm->next_rtp.u64 < strm->next_rtcp.u64) {
-        lesser = strm->next_rtp;
-        send_rtp = PJ_TRUE;
-    } else {
-        lesser = strm->next_rtcp;
-        send_rtcp = PJ_TRUE;
+    pj_timestamp now;
+    if (strm->next_rtp.u64 >= strm->next_rtcp.u64) {
+        pj_get_timestamp(&now);
+        if (strm->next_rtcp.u64 <= now.u64) {
+            void *rtcp_pkt;
+            int rtcp_len;
+            pj_ssize_t size;
+            pj_status_t status;
+            
+            /* Build RTCP packet */
+            pjmedia_rtcp_build_rtcp(&strm->rtp_pair.rtcp_session, &rtcp_pkt, &rtcp_len);
+            
+            /* Send packet */
+            size = rtcp_len;
+            status = pjmedia_transport_send_rtcp(strm->transport,
+                                                 rtcp_pkt, size);
+            if (status != PJ_SUCCESS) {
+                app_perror("myrtp.c", "Error sending RTCP packet", status);
+            }
+            
+            /* Schedule next send */
+            strm->next_rtcp.u64 += (strm->freq.u64 * (RTCP_INTERVAL+(pj_rand()%RTCP_RAND)) / 1000);
+        }
     }
     
+    pj_timestamp lesser;
+    pj_time_val timeout;
+
+    lesser = strm->next_rtp;
     pj_get_timestamp(&now);
+    
+    /* Determine how long to sleep */
     if (lesser.u64 <= now.u64) {
         timeout.sec = timeout.msec = 0;
         //printf("immediate "); fflush(stdout);
@@ -230,80 +244,47 @@ int librtp_put_audio(RtpMediaStream * strm, char * data, int dataSize){
     printf("timeout:%d %d\n", timeout.sec, timeout.msec);
     pj_thread_sleep(PJ_TIME_VAL_MSEC(timeout)); //TODO deal sleep
     
-    pj_get_timestamp(&now);
+    //start to send rtp
+    pj_status_t status;
+    const void *p_hdr;
+    const pjmedia_rtp_hdr *hdr;
+    pj_ssize_t size;
+    int hdrlen;
     
-    if (send_rtp || strm->next_rtp.u64 <= now.u64) {
-        /*
-         * Time to send RTP packet.
-         */
-        pj_status_t status;
-        const void *p_hdr;
-        const pjmedia_rtp_hdr *hdr;
-        pj_ssize_t size;
-        int hdrlen;
+    /* Format RTP header */
+    status = pjmedia_rtp_encode_rtp( &strm->rtp_pair.rtp_session, 0, //pt is 0 for pcmu
+                                    0, /* marker bit */
+                                    160,
+                                    160,
+                                    &p_hdr, &hdrlen);
+    if (status == PJ_SUCCESS) {
         
-        /* Format RTP header */
-        status = pjmedia_rtp_encode_rtp( &strm->rtp_pair.rtp_session, 0, //pt is 0 for pcmu
-                                        0, /* marker bit */
-                                        160,
-                                        160,
-                                        &p_hdr, &hdrlen);
-        if (status == PJ_SUCCESS) {
-            
-            //PJ_LOG(4,(THIS_FILE, "\t\tTx seq=%d", pj_ntohs(hdr->seq)));
-            
-            hdr = (const pjmedia_rtp_hdr*) p_hdr;
-            
-            /* Copy RTP header to packet */
-            pj_memcpy(packet, hdr, hdrlen);
-            
-            /* Zero the payload */
-            pj_memcpy(packet+hdrlen, data, 160);
-            
-            /* Send RTP packet */
-            size = hdrlen + 160;
-            status = pjmedia_transport_send_rtp(strm->transport,
-                                                packet, size);
-            if (status != PJ_SUCCESS)
-                app_perror("myrtp.c", "Error sending RTP packet", status);
-            
-        } else {
-            pj_assert(!"RTP encode() error");
-        }
+        //PJ_LOG(4,(THIS_FILE, "\t\tTx seq=%d", pj_ntohs(hdr->seq)));
         
-        /* Update RTCP SR */
-        pjmedia_rtcp_tx_rtp( &strm->rtp_pair.rtcp_session, 160);
+        hdr = (const pjmedia_rtp_hdr*) p_hdr;
         
-        /* Schedule next send */
-        strm->next_rtp.u64 += (msec_interval * strm->freq.u64 / 1000);
+        /* Copy RTP header to packet */
+        pj_memcpy(packet, hdr, hdrlen);
+        
+        /* Zero the payload */
+        pj_memcpy(packet+hdrlen, data, 160);
+        
+        /* Send RTP packet */
+        size = hdrlen + 160;
+        status = pjmedia_transport_send_rtp(strm->transport,
+                                            packet, size);
+        if (status != PJ_SUCCESS)
+            app_perror("myrtp.c", "Error sending RTP packet", status);
+        
+    } else {
+        pj_assert(!"RTP encode() error");
     }
     
+    /* Update RTCP SR */
+    pjmedia_rtcp_tx_rtp( &strm->rtp_pair.rtcp_session, 160);
     
-    if (send_rtcp || strm->next_rtcp.u64 <= now.u64) {
-        /*
-         * Time to send RTCP packet.
-         */
-        void *rtcp_pkt;
-        int rtcp_len;
-        pj_ssize_t size;
-        pj_status_t status;
-        
-        /* Build RTCP packet */
-        pjmedia_rtcp_build_rtcp(&strm->rtp_pair.rtcp_session, &rtcp_pkt, &rtcp_len);
-        
-        
-        /* Send packet */
-        size = rtcp_len;
-        status = pjmedia_transport_send_rtcp(strm->transport,
-                                             rtcp_pkt, size);
-        if (status != PJ_SUCCESS) {
-            app_perror("myrtp.c", "Error sending RTCP packet", status);
-        }
-        
-        /* Schedule next send */
-        strm->next_rtcp.u64 += (strm->freq.u64 * (RTCP_INTERVAL+(pj_rand()%RTCP_RAND)) /
-                          1000);
-    }
+    /* Schedule next send */
+    strm->next_rtp.u64 += (msec_interval * strm->freq.u64 / 1000);
     
     
     return 0;
