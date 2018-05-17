@@ -15,16 +15,10 @@ pjmedia_sdp_session * localSdp;
 pjmedia_sdp_session * remoteSdp;
 int gatheringOk = 0;
 
-static int app_perror(const char *sender, const char *title,
-    pj_status_t status)
-{
-    char errmsg[PJ_ERR_MSG_SIZE];
+#define OFFER 1
+#define ANSWER 2
+int gRole = OFFER;
 
-    pj_strerror(status, errmsg, sizeof(errmsg));
-
-    PJ_LOG(3, (sender, "%s: %s [code=%d]", title, errmsg, status));
-    return 1;
-}
 
 void on_ice_complete2(pjmedia_transport *tp,
     pj_ice_strans_op op,
@@ -64,6 +58,30 @@ void on_ice_complete(pjmedia_transport *tp,
     }
 }
 
+void sdp_from_file(pjmedia_sdp_session ** sdp){
+    
+    char sdpfilepath[256] = {0};
+    printf("input peer sdp file.(read from file):");
+    scanf("%s\n", sdpfilepath);
+    char remoteSdpStr[2048]={0};
+    
+    FILE * f = fopen(sdpfilepath, "rb");
+    assert(f != NULL);
+    
+    fseek(f,0, SEEK_END);
+    int flen = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    int rlen = fread(remoteSdpStr, 1, flen, f);
+    assert(rlen == flen);
+    
+    pj_pool_t * sdpRemotepool = pj_pool_create(&cp.factory, "sdpremote", 2048, 1024, NULL);
+    
+    pj_status_t status;
+    status = pjmedia_sdp_parse(sdpRemotepool, remoteSdpStr, strlen(remoteSdpStr), sdp);
+    assert(status == PJ_SUCCESS);
+}
+
 void createOffer(pjmedia_endpt *endpt, pjmedia_transport *transport, pjmedia_sdp_session **p_sdp, pjmedia_transport_info *tinfo) {
     pj_str_t originStrAddr = pj_str("localhost");
     pj_sockaddr originAddr;
@@ -87,19 +105,57 @@ void createOffer(pjmedia_endpt *endpt, pjmedia_transport *transport, pjmedia_sdp
     pjmedia_sdp_print(sdp, sdpStr, 2048);
     printf("%s\n", sdpStr);
 
+    status = pjmedia_transport_media_create(transport, sdppool, 0, NULL, 0);
+    assert(status == PJ_SUCCESS);
+
     status = pjmedia_transport_encode_sdp(transport, sdppool, sdp, NULL, 0);
     assert(status == PJ_SUCCESS);
 
     memset(sdpStr, 0, 2048);
     pjmedia_sdp_print(sdp, sdpStr, 2048);
     printf("%s\n", sdpStr);
-    //pjmedia_sdp_attr *candAttr;
-    //pjmedia_sdp_attr_create(sdppool, "candidate", NULL);
+}
 
+void createAnswer(pjmedia_endpt *endpt, pjmedia_transport *transport, pjmedia_sdp_session **p_sdp, pjmedia_sdp_session *offer, pjmedia_transport_info *tinfo) {
+    pj_str_t originStrAddr = pj_str("localhost");
+    pj_sockaddr originAddr;
+    pj_status_t status;
+    status = pj_sockaddr_parse(pj_AF_INET(), 0, &originStrAddr, &originAddr);
+    assert(status == PJ_SUCCESS);
+    
+    pj_pool_t * sdppool = pj_pool_create(&cp.factory, "sdppool", 2048, 1024, NULL);
+    status = pjmedia_endpt_create_base_sdp(endpt, sdppool, NULL, &originAddr, p_sdp);
+    assert(status == PJ_SUCCESS);
+    
+    pjmedia_sdp_media * sdpMedia;
+    status = pjmedia_endpt_create_audio_sdp(endpt, sdppool, &tinfo->sock_info, 0, &sdpMedia);
+    assert(status == PJ_SUCCESS);
+    
+    pjmedia_sdp_session *sdp = *p_sdp;
+    sdp->media[sdp->media_count++] = sdpMedia;
+    
+    char * sdpStr = (char *)malloc(2048);
+    memset(sdpStr, 0, 2048);
+    pjmedia_sdp_print(sdp, sdpStr, 2048);
+    printf("%s\n", sdpStr);
+    
+    status = pjmedia_transport_media_create(transport, sdppool, 0, offer, 0);
+    assert(status == PJ_SUCCESS);
+    
+    status = pjmedia_transport_encode_sdp(transport, sdppool, sdp, offer, 0);
+    assert(status == PJ_SUCCESS);
+    
+    memset(sdpStr, 0, 2048);
+    pjmedia_sdp_print(sdp, sdpStr, 2048);
+    printf("%s\n", sdpStr);
 }
 
 void setLocalDescription(pjmedia_sdp_session *sdp) {
     localSdp = sdp;
+}
+
+void setRemoteDescription(pjmedia_sdp_session *sdp) {
+    remoteSdp = sdp;
 }
 
 int main(int argc, char **argv) {
@@ -109,16 +165,26 @@ int main(int argc, char **argv) {
     status = pjlib_util_init();
     PJ_ASSERT_RETURN(status == PJ_SUCCESS, 1);
 
-
-
     pj_caching_pool_init(&cp, &pj_pool_factory_default_policy, 0);
 
+    
     pjmedia_endpt *med_endpt;
     status = pjmedia_endpt_create(&cp.factory, NULL, 1, &med_endpt);
     PJ_ASSERT_RETURN(status == PJ_SUCCESS, 1);
 
   
+    int roleOk = 0;
+    do{
+        printf("select role:\n1 for offer\n2 for answer\n:");
+        scanf("%d", &gRole);
+        if(gRole == OFFER || gRole == ANSWER){
+            roleOk = 1;
+        }else{
+            printf("input is wrong");
+        }
+    }while(roleOk != 0);
 
+    /* start ice config start */
     pj_timer_heap_t *ht = NULL;
     pj_pool_t * timerpool = pj_pool_create(&cp.factory, "timerpool", 2048, 1024, NULL);
     pj_timer_heap_create(timerpool, 100, &ht);
@@ -143,6 +209,7 @@ int main(int argc, char **argv) {
     g_icecfg.turn_tp[0].af = pj_AF_INET();
     g_icecfg.turn_tp[0].conn_type = PJ_TURN_TP_UDP;
     pj_turn_sock_cfg_default(&g_icecfg.turn_tp[0].cfg);
+    /* end ice config start */
 
     pjmedia_ice_cb cb;
     // 注释有点非常误导或者本来就是错的
@@ -159,34 +226,38 @@ int main(int argc, char **argv) {
         &transport);
     printf("after create3------------------\n");
 
-    int sleepTime = 1000;
-    if(argc == 2)
-        sleepTime = atoi(argv[1]);
+    
     do{
-    pj_thread_sleep(sleepTime);
+        pj_thread_sleep(1000);
     }while(gatheringOk == 0);
     printf("after sleep------------------\n");
+    
+    
     pjmedia_transport_info tpinfo;
     pjmedia_transport_info_init(&tpinfo);
     pjmedia_transport_get_info(transport, &tpinfo);
     pjmedia_transport_info_get_spc_info(&tpinfo, PJMEDIA_TRANSPORT_TYPE_ICE);
     printf("after get info------------------\n");
     
-    //这个调用一定要在on_ice_complete回调之后
-    pj_pool_t * sdppool = pj_pool_create(&cp.factory, "sdp", 2048, 1024, NULL);
-    status = pjmedia_transport_media_create(transport, sdppool, 0, NULL, 0);
-    if (status != PJ_SUCCESS) {
-        app_perror(THIS_FILE, "pjmedia_transport_media_create", status);
-        return status;
+
+    if(gRole == OFFER){
+        pjmedia_sdp_session *sdp;
+        createOffer(med_endpt, transport, &sdp, &tpinfo);
+        setLocalDescription(sdp);
+        sdp_from_file(&sdp);
+        setRemoteDescription(sdp);
     }
-    printf("after media create------------------\n");
+    
+    if(gRole == ANSWER){
+        pjmedia_sdp_session *rSdp, *lSdp;
+        sdp_from_file(&rSdp);
+        createAnswer(med_endpt, transport, &lSdp, rSdp, &tpinfo);
+        setLocalDescription(lSdp);
+    }
 
-    pjmedia_sdp_session *sdp;
-    createOffer(med_endpt, transport, &sdp, &tpinfo);
-    setLocalDescription(sdp);
-
-    //pjmedia_sdp_parse(pj_pool_t *pool, char *buf, pj_size_t len, pjmedia_sdp_session **p_sdp);
-    //setRemoteDescription();
-
+    pj_pool_t * icenegpool = pj_pool_create(&cp.factory, "iceneg", 2048, 1024, NULL);
+    pjmedia_transport_media_start(transport, icenegpool, localSdp, remoteSdp, 0);
    
+    printf("enter to quit");
+    scanf("%s\n", (char *)&gRole);
 }
