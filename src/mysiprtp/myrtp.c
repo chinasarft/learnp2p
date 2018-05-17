@@ -169,7 +169,7 @@ int librtp_set_video(RtpMediaStream * s, MediaInfo * m){
     
     pj_status_t status;
     pjmedia_h264_packetizer_cfg cfg;
-    cfg.mode = PJMEDIA_H264_PACKETIZER_MODE_SINGLE_NAL;
+    cfg.mode = PJMEDIA_H264_PACKETIZER_MODE_NON_INTERLEAVED;
     cfg.mtu = PJMEDIA_MAX_MTU;
     s->h2642rtp_pool = pj_pool_create(&s->cp.factory, "h2642rtp", 2000, 2000, NULL);
     status = pjmedia_h264_packetizer_create(s->h2642rtp_pool,
@@ -204,6 +204,7 @@ int librtp_put_video(RtpMediaStream * strm, char * data, int dataSize){
     
     pj_size_t left = (pj_size_t)dataSize;
     unsigned offset = 0;
+    int first = 1; //FU-A 不设置start bit，只有自己设置
     while (left != 0) {
         
         payload = NULL;
@@ -224,22 +225,33 @@ int librtp_put_video(RtpMediaStream * strm, char * data, int dataSize){
         left -= bits_pos;
         offset += bits_pos;
         
-        /* Format RTP header */
+
         int marker = 0;
         int ts_len = 3600;
         if (offset == dataSize && offset != bits_pos){
             marker = 1;
         }
+        int type = data[0] & 0x1F;
+        if(type != 1 || type != 5 )
+            ts_len = 0;
         if(offset != bits_pos)
             ts_len = 0;
 
+
+        /* Format RTP header */
         const void *p_hdr;
         int hdrlen;
         status = pjmedia_rtp_encode_rtp(&strm->rtp_pair.rtp_session, 96, //pt is 0 for h264
-                                        marker, /* marker bit */
+                                        0, /* marker bit *///TODO marker bit set?
                                         payload_len,
                                         ts_len,
                                         &p_hdr, &hdrlen);
+        
+        if(first && left > 0){
+            uint8_t * tmp = (uint8_t*)payload;
+            tmp[1] = tmp[1] | 0x80;
+            first = 0;
+        }
         
         pj_memcpy(packet, p_hdr, hdrlen);
         pj_memcpy(&packet[hdrlen], payload, payload_len);

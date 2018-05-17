@@ -75,6 +75,11 @@ static char * copy_nal_from_buf(char *h264, int *h264_len, uint8_t *buf, int *le
                             continue;
                         goto END;
                     } else if (tmpbuf[0] == 0x3) {
+                        splitCnt = 0;
+                        buf[*len] = split[0];
+                        (*len)++;
+                        buf[*len] = split[1];
+                        (*len)++;
                     } else {
                         splitCnt = 0;
                         buf[*len] = split[0];
