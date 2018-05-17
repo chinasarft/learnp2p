@@ -31,6 +31,79 @@ static struct app
     RtpMediaStream media_stream;
 } app;
 
+static char * copy_nal_from_buf(char *h264, int *h264_len, uint8_t *buf, int *len)
+{
+    char split[4];
+    char tmpbuf[1];
+    int splitCnt = 0;
+    
+    
+    *len = 0;
+    int cnt=0;
+    do {
+        tmpbuf[0] = h264[cnt++];
+        if (cnt >= *h264_len) {
+            return NULL;
+        }
+        if (!splitCnt && tmpbuf[0] != 0x0) {
+            buf[*len] = tmpbuf[0];
+            (*len)++;
+        } else if (!splitCnt && tmpbuf[0] == 0x0) {
+            splitCnt = 1;
+            split[0] = tmpbuf[0];
+        } else if (splitCnt) {
+            switch (splitCnt) {
+                case 1:
+                    if (tmpbuf[0] == 0x0) {
+                        splitCnt++;
+                        split[1] = tmpbuf[0];
+                    } else {
+                        splitCnt = 0;
+                        buf[*len] = split[0];
+                        (*len)++;
+                        buf[*len] = tmpbuf[0];
+                        (*len)++;
+                    }
+                    break;
+                case 2:
+                    if (tmpbuf[0] == 0x0) {
+                        splitCnt++;
+                        split[2] = tmpbuf[0];
+                    } else if (tmpbuf[0] == 0x1) {
+                        splitCnt = 0;
+                        if(cnt <= 3)
+                            continue;
+                        goto END;
+                    } else if (tmpbuf[0] == 0x3) {
+                    } else {
+                        splitCnt = 0;
+                        buf[*len] = split[0];
+                        (*len)++;
+                        buf[*len] = split[1];
+                        (*len)++;
+                        buf[*len] = tmpbuf[0];
+                        (*len)++;
+                    }
+                    break;
+                case 3:
+                    if (tmpbuf[0] == 0x1) {
+                        splitCnt = 0;
+                        if(cnt <= 4)
+                            continue;
+                        goto END;
+                    } else {
+                        splitCnt = 0;
+                        break;
+                    }
+            }
+        }
+        
+    } while (1);
+END:
+    *h264_len -= cnt;
+    return h264+cnt;
+}
+
 /* Init application options */
 static pj_status_t init_options(int argc, char *argv[])
 {
@@ -146,34 +219,76 @@ int main(int argc, char **argv){
     m.payload_type = 0;
     m.clock_rate = 8000;
     librtp_set_audio(&app.media_stream, &m);
+    m.payload_type = 96;
+    librtp_set_video(&app.media_stream, &m);
     
     librtp_init_p2p_transport_when180(&app.media_stream);
     
     pj_status_t status;
-    pj_oshandle_t fd;
-    pj_pool_t * pool = pj_pool_create(&app.media_stream.cp.factory, "filetest", 2000, 2000, NULL);
-    status = pj_file_open(pool, "/Users/liuye/Documents/p2p/build/src/mysiprtp/Debug/8000_1.mulaw", PJ_O_RDONLY, &fd);
+    pj_oshandle_t audioFd;
+    pj_pool_t * apool = pj_pool_create(&app.media_stream.cp.factory, "afiletest", 2000, 2000, NULL);
+    status = pj_file_open(apool, "/Users/liuye/Documents/p2p/build/src/mysiprtp/Debug/8000_1.mulaw", PJ_O_RDONLY, &audioFd);
     if(status != PJ_SUCCESS){
         printf("pj_file_open fail:%d\n", status);
         return status;
     }
-    char * buf = pj_pool_alloc(pool, 1500);
+    
+    pj_oshandle_t videoFd;
+    pj_pool_t * vpool = pj_pool_create(&app.media_stream.cp.factory, "vfiletest", 4096, 4096, NULL);
+    status = pj_file_open(vpool, "/Users/liuye/Documents/p2p/build/src/mysiprtp/Debug/hks.h264", PJ_O_RDONLY, &videoFd);
+    if(status != PJ_SUCCESS){
+        printf("pj_file_open fail:%d\n", status);
+        return status;
+    }
+    
+    
+    char * abuf = malloc(1500);
+    uint8_t * vbuf = (uint8_t *)malloc(1024*256+10);
+    vbuf = vbuf+10;
+    
+    char * h264 = malloc(1024*1024*4);
+    pj_ssize_t h264len = 1024*1024*4;
+    status = pj_file_read(videoFd, h264, &h264len);
+    if(status != PJ_SUCCESS){
+        printf("pj_file_read fail:%d\n", status);
+        return status;
+    }
+    
     int cnt = 0;
+    int aok = 1, vok = 1;
+    char * nextstart = h264;
+    int nextlen = h264len;
     while(status == PJ_SUCCESS)
     {
-        pj_ssize_t readLen = 160;
-        status = pj_file_read(fd, buf, &readLen);
-        if(status != PJ_SUCCESS){
-            printf("pj_file_read fail:%d\n", status);
-            continue;
+        if(0){ //if(aok){
+            pj_ssize_t readLen = 160;
+            status = pj_file_read(audioFd, abuf, &readLen);
+            if(status != PJ_SUCCESS){
+                printf("pj_file_read fail:%d\n", status);
+                aok = 0;
+            }
+            if(readLen == 160){
+                printf("%08d, send %ld to rtp\n", cnt, readLen);
+                librtp_put_audio(&app.media_stream, abuf, (int)readLen);
+            }else{
+                printf("pj_file_read less than one frame length:\n");
+            }
+            
         }
-        if(readLen != 160){
-            printf("pj_file_read less than one frame length:\n");
-            status = 1;
-            continue;
+        if(vok){
+            int frlen = 0;
+            nextstart = copy_nal_from_buf(nextstart, &nextlen, vbuf, &frlen);
+            if(nextstart == NULL){
+                vok = 0;
+                continue;
+            }
+            //TODO send h264
+            status = librtp_put_video(&app.media_stream, (char *)vbuf, frlen);
+            if(status != 0){
+                vok = 0;
+            }
+            printf("send one video packet:%d\n", frlen);
         }
-        printf("%08d, send %d to rtp\n", cnt, readLen);
-        librtp_put_audio(&app.media_stream, buf, (int)readLen);
         cnt++;
     }
     return 0;

@@ -6,6 +6,7 @@
 #include <pjsip_simple.h>
 #include <pjlib-util.h>
 #include <pjlib.h>
+#include <pjmedia-codec/h264_packetizer.h>
 
 #include <stdlib.h>
 
@@ -30,6 +31,8 @@ typedef struct _RtpMediaStream{
     MediaInfo video;
     pj_timestamp freq, next_rtp, next_rtcp;
     int time_inited;
+    pjmedia_h264_packetizer *video_rtp_packer;
+    pj_pool_t        *h2642rtp_pool;
 }RtpMediaStream;
 
 typedef struct _SdpInfo{
@@ -47,3 +50,4 @@ int librtp_set_audio(RtpMediaStream * s, MediaInfo * m);
 int librtp_set_video(RtpMediaStream * s, MediaInfo * m);
 int librtp_init_p2p_transport_when180(RtpMediaStream * s);
 int librtp_put_audio(RtpMediaStream * s, char * data, int dataSize);
+int librtp_put_video(RtpMediaStream * s, char * data, int dataSize);

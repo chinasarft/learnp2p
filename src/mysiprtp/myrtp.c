@@ -166,6 +166,17 @@ int librtp_set_audio(RtpMediaStream * s, MediaInfo * m){
 
 int librtp_set_video(RtpMediaStream * s, MediaInfo * m){
     s->video = *m;
+    
+    pj_status_t status;
+    pjmedia_h264_packetizer_cfg cfg;
+    cfg.mode = PJMEDIA_H264_PACKETIZER_MODE_SINGLE_NAL;
+    cfg.mtu = PJMEDIA_MAX_MTU;
+    s->h2642rtp_pool = pj_pool_create(&s->cp.factory, "h2642rtp", 2000, 2000, NULL);
+    status = pjmedia_h264_packetizer_create(s->h2642rtp_pool,
+                                   NULL, &s->video_rtp_packer);
+    if(status != PJ_SUCCESS){
+        return status;
+    }
     return 0;
 }
 
@@ -177,7 +188,68 @@ void librtp_release_sender(RtpMediaStream * s){
     }
 }
 
-int librtp_put_video(RtpMediaStream * s, char * data, int dataSize){
+//TODO
+/*
+  这个函数怎么做，因为要手动送时间,而像pps sps sei等时间戳又不变
+  一帧可能是分片发出去的
+ */
+int librtp_put_video(RtpMediaStream * strm, char * data, int dataSize){
+    const pj_uint8_t * payload;
+    pj_size_t payload_len;
+    unsigned bits_pos;
+    char packet[1500];
+    
+    if(dataSize == 2)// access unit delimiter
+        return 0;
+    
+    pj_size_t left = (pj_size_t)dataSize;
+    unsigned offset = 0;
+    while (left != 0) {
+        
+        payload = NULL;
+        payload_len = 0;
+        bits_pos = 0;
+        
+        pj_status_t status;
+        status = pjmedia_h264_packetize(strm->video_rtp_packer,
+                                        (pj_uint8_t *)data + offset,
+                                        left,
+                                        &bits_pos,
+                                        &payload,
+                                        &payload_len
+                                        );
+        if (status != PJ_SUCCESS) {
+            return status;
+        }
+        left -= bits_pos;
+        offset += bits_pos;
+        
+        /* Format RTP header */
+        int marker = 0;
+        int ts_len = 3600;
+        if (offset == dataSize && offset != bits_pos){
+            marker = 1;
+        }
+        if(offset != bits_pos)
+            ts_len = 0;
+
+        const void *p_hdr;
+        int hdrlen;
+        status = pjmedia_rtp_encode_rtp(&strm->rtp_pair.rtp_session, 96, //pt is 0 for h264
+                                        marker, /* marker bit */
+                                        payload_len,
+                                        ts_len,
+                                        &p_hdr, &hdrlen);
+        
+        pj_memcpy(packet, p_hdr, hdrlen);
+        pj_memcpy(&packet[hdrlen], payload, payload_len);
+        status = pjmedia_transport_send_rtp(strm->transport,
+                                            packet, payload_len + hdrlen);
+        
+        
+        pjmedia_rtcp_tx_rtp(&strm->rtp_pair.rtcp_session, payload_len);
+    }
+    pj_thread_sleep(25);
     return 0;
 }
 
@@ -241,7 +313,7 @@ int librtp_put_audio(RtpMediaStream * strm, char * data, int dataSize){
         
         //printf("%d:%03d ", timeout.sec, timeout.msec); fflush(stdout);
     }
-    printf("timeout:%d %d\n", timeout.sec, timeout.msec);
+    printf("timeout:%ld %ld\n", timeout.sec, timeout.msec);
     pj_thread_sleep(PJ_TIME_VAL_MSEC(timeout)); //TODO deal sleep
     
     //start to send rtp
