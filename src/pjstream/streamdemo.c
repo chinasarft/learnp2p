@@ -42,7 +42,46 @@ static const char *desc =
 
 #define THIS_FILE	"streamdemo.c"
 
-    pj_caching_pool cp;
+pj_caching_pool cp;
+
+
+void on_ice_complete2(pjmedia_transport *tp,
+                            pj_ice_strans_op op,
+                            pj_status_t status,
+                            void *user_data){
+    
+    printf("--------->");
+    
+}
+
+void on_ice_complete(pjmedia_transport *tp,
+                     pj_ice_strans_op op,
+                     pj_status_t status) {
+    
+    switch (op) {
+            /** Initialization (candidate gathering) */
+        case PJ_ICE_STRANS_OP_INIT:
+            printf("gathering candidates finish\n");
+            break;
+            
+            /** Negotiation */
+        case PJ_ICE_STRANS_OP_NEGOTIATION:
+            printf("PJ_ICE_STRANS_OP_NEGOTIATION\n");
+            break;
+            
+            /** This operation is used to report failure in keep-alive operation.
+             *  Currently it is only used to report TURN Refresh failure.  */
+        case PJ_ICE_STRANS_OP_KEEP_ALIVE:
+            printf("PJ_ICE_STRANS_OP_KEEP_ALIVE\n");
+            break;
+            
+            /** IP address change notification from STUN keep-alive operation.  */
+        case PJ_ICE_STRANS_OP_ADDR_CHANGE:
+            printf("PJ_ICE_STRANS_OP_ADDR_CHANGE\n");
+            break;
+    }
+}
+
 
 /* Prototype */
 static void print_stream_stat(pjmedia_stream *stream,
@@ -129,6 +168,7 @@ static pj_status_t create_stream(pj_pool_t *pool,
     //pj_ice_strans_turn_cfg turn_tp[PJ_ICE_MAX_TURN];
     pj_ice_strans_cfg g_icecfg;
     pj_ice_strans_cfg_default(&g_icecfg);
+    g_icecfg.af = pj_AF_INET();
     //stun turn deprecated
     pj_bzero(&g_icecfg.stun, sizeof(g_icecfg.stun));
     pj_bzero(&g_icecfg.turn, sizeof(g_icecfg.turn));
@@ -146,10 +186,45 @@ static pj_status_t create_stream(pj_pool_t *pool,
     g_icecfg.turn_tp[0].conn_type = PJ_TURN_TP_UDP;
     pj_turn_sock_cfg_default(&g_icecfg.turn_tp[0].cfg);
     
-    g_icecfg.af = pj_AF_INET();
-    status = pjmedia_ice_create(med_endpt, "icetest", 1, &g_icecfg,
-                                NULL, //const pjmedia_ice_cb *cb
+    pjmedia_ice_cb cb;
+    cb.on_ice_complete = on_ice_complete; //这个回调其实就是ice状态的回调，比如gathering candidates
+    // 注释上说的如果有这两个只回调2，如果是从理解来说，可以有两种
+    //    1. 只有negotiation回调回调2，其它回调回调本函数（negotiation回调可能不一定成功，可能是通知完成而已）
+    //    2. 如果2和本函数同时存在，回调2
+    // 但是从代码里看不管什么状态都会回调本函数，应该只有在negotiation成功时候才回调2
+    cb.on_ice_complete2 = on_ice_complete2;
+    status = pjmedia_ice_create3(med_endpt, "icetest", 2, &g_icecfg,
+                                &cb, //const pjmedia_ice_cb *cb
+                                0,
+                                NULL,
                                 &transport);
+    printf("after create3------------------\n");
+    pj_pool_t * sdppool = pj_pool_create(&cp.factory, "sdp", 2048, 1024, NULL);
+    status = pjmedia_transport_media_create(transport, sdppool, 0, NULL, 0);
+    if(status != PJ_SUCCESS){
+        app_perror(THIS_FILE, "pjmedia_transport_media_create", status);
+        return status;
+    }
+    printf("after media create------------------\n");
+    pj_thread_sleep(1000); //pjmedia_ice_cb 上面的中文写出来的理解来看，这里是测试时候必须的，
+    // 实际代码不会睡眠来做，可能在回调函数里面做，或者回调函数里通知条件变量之类的做法
+    printf("after sleep------------------\n");
+    pjmedia_transport_info tpinfo;
+    pjmedia_transport_info_init(&tpinfo);
+    pjmedia_transport_get_info(transport, &tpinfo);
+    printf("after get info------------------\n");
+
+    status = pjmedia_transport_encode_sdp(transport, sdppool,
+                                          NULL,//pjmedia_sdp_session *     sdp,
+                                          NULL,
+                                          1//unsigned     media_index
+                                          );
+    if(status != PJ_SUCCESS){
+        app_perror(THIS_FILE, "pjmedia_transport_encode_sdp", status);
+        return status;
+    }
+    
+
 #else
     status = pjmedia_transport_udp_create(med_endpt, NULL, local_port,
         0, &transport);
