@@ -31,22 +31,23 @@ static struct app
     RtpMediaStream media_stream;
 } app;
 
-static char * copy_nal_from_buf(char *h264, int *h264_len, uint8_t *buf, int *len)
+static char * copy_nal_from_buf(char *h264, int *h264_len, int *len)
 {
     char split[4];
     char tmpbuf[1];
     int splitCnt = 0;
-    
+    int frameCnt = 0; //sps pps sei delimiter等
     
     *len = 0;
     int cnt=0;
     do {
         tmpbuf[0] = h264[cnt++];
         if (cnt >= *h264_len) {
+            if(cnt > 3)
+                goto END;
             return NULL;
         }
         if (!splitCnt && tmpbuf[0] != 0x0) {
-            buf[*len] = tmpbuf[0];
             (*len)++;
         } else if (!splitCnt && tmpbuf[0] == 0x0) {
             splitCnt = 1;
@@ -59,10 +60,6 @@ static char * copy_nal_from_buf(char *h264, int *h264_len, uint8_t *buf, int *le
                         split[1] = tmpbuf[0];
                     } else {
                         splitCnt = 0;
-                        buf[*len] = split[0];
-                        (*len)++;
-                        buf[*len] = tmpbuf[0];
-                        (*len)++;
                     }
                     break;
                 case 2:
@@ -70,31 +67,22 @@ static char * copy_nal_from_buf(char *h264, int *h264_len, uint8_t *buf, int *le
                         splitCnt++;
                         split[2] = tmpbuf[0];
                     } else if (tmpbuf[0] == 0x1) {
-                        splitCnt = 0;
-                        if(cnt <= 3)
+                        if(cnt == 3){ //第一次的分隔符
+                            splitCnt = 0;
                             continue;
+                        }
                         goto END;
                     } else if (tmpbuf[0] == 0x3) {
-                        splitCnt = 0;
-                        buf[*len] = split[0];
-                        (*len)++;
-                        buf[*len] = split[1];
-                        (*len)++;
                     } else {
                         splitCnt = 0;
-                        buf[*len] = split[0];
-                        (*len)++;
-                        buf[*len] = split[1];
-                        (*len)++;
-                        buf[*len] = tmpbuf[0];
-                        (*len)++;
                     }
                     break;
                 case 3:
                     if (tmpbuf[0] == 0x1) {
-                        splitCnt = 0;
-                        if(cnt <= 4)
+                        if(cnt == 4){//第一次的分隔符
+                            splitCnt = 0;
                             continue;
+                        }
                         goto END;
                     } else {
                         splitCnt = 0;
@@ -105,8 +93,17 @@ static char * copy_nal_from_buf(char *h264, int *h264_len, uint8_t *buf, int *le
         
     } while (1);
 END:
-    *h264_len -= cnt;
-    return h264+cnt;
+
+    if(splitCnt){
+        cnt = cnt - splitCnt - 1; //减去分割的delimiter
+        (*len) = cnt ;
+        *h264_len -= cnt;
+        return h264+cnt;
+    }else{
+        (*len) = cnt;
+        *h264_len -= cnt;
+        return h264+cnt;
+    }
 }
 
 /* Init application options */
@@ -281,14 +278,41 @@ int main(int argc, char **argv){
             
         }
         if(vok){
+            int total = 0;
             int frlen = 0;
-            nextstart = copy_nal_from_buf(nextstart, &nextlen, vbuf, &frlen);
-            if(nextstart == NULL){
+            char * tmp = NULL;
+            int tmplen = nextlen;
+            char * sendp = NULL;
+            do{
+                frlen = 0;
+                tmp = copy_nal_from_buf(nextstart, &tmplen, &frlen);
+                if(tmp == NULL){
+                    break;
+                }else if(sendp == NULL){
+                    sendp = tmp;
+                }
+                if(total == 0 && frlen > 1400){
+                    total = frlen;
+                    nextstart = tmp;
+                    nextlen = tmplen;
+                    break;
+                }else if(frlen + total < 1400){
+                    total += frlen;
+                    nextstart = tmp;
+                    nextlen = tmplen;
+                    continue;
+                }else{
+                    tmp = nextstart;
+                    break;
+                }
+            }while(1);
+            if(tmp == NULL){
                 vok = 0;
                 continue;
             }
+            
             //TODO send h264
-            status = librtp_put_video(&app.media_stream, (char *)vbuf, frlen);
+            status = librtp_put_video(&app.media_stream, sendp, total);
             if(status != 0){
                 vok = 0;
             }

@@ -246,12 +246,13 @@ int librtp_put_video(RtpMediaStream * strm, char * data, int dataSize){
                                         payload_len,
                                         ts_len,
                                         &p_hdr, &hdrlen);
-        
+#if 0
         if(first && left > 0){
             uint8_t * tmp = (uint8_t*)payload;
             tmp[1] = tmp[1] | 0x80;
             first = 0;
         }
+#endif
         
         pj_memcpy(packet, p_hdr, hdrlen);
         pj_memcpy(&packet[hdrlen], payload, payload_len);
