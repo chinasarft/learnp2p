@@ -18,7 +18,10 @@ char remoteSdpStr[2048]={0};
 
 #define OFFER 1
 #define ANSWER 2
+#define OFFERSDP "offer.sdp"
+#define ANSWERSDP "anser.sdp"
 int gRole = OFFER;
+char * gOpenFile = NULL;
 
 
 void on_ice_complete2(pjmedia_transport *tp,
@@ -26,7 +29,7 @@ void on_ice_complete2(pjmedia_transport *tp,
     pj_status_t status,
     void *user_data) {
 
-    printf("--------->on_ice_complete2\n");
+    printf("------------------------------------------------------>on_ice_complete2\n");
 
 }
 
@@ -59,27 +62,53 @@ void on_ice_complete(pjmedia_transport *tp,
     }
 }
 
+void write_sdp(char * buf, int len, char * fname){
+    FILE * f = fopen(fname, "wb");
+    assert(f != NULL);
+    
+    int wlen = fwrite(buf, 1, len, f);
+    assert(wlen == len);
+    
+    fclose(f);
+}
+void input_confirm(char * pmt){
+    char input[10];
+    while(1){
+        printf("%s, confirm(ok):", pmt);
+        memset(input, 0, sizeof(input));
+        scanf("%s", input);
+        if(strcmp("ok", input) == 0){
+            break;
+        }
+    }
+}
 void sdp_from_file(pjmedia_sdp_session ** sdp){
+    input_confirm("input peer sdp file.(read from file)");
     
-    char sdpfilepath[256] = {0};
-    printf("input peer sdp file.(read from file):");
-    scanf("%s", sdpfilepath);
-    
-    FILE * f = fopen(sdpfilepath, "rb");
+    //FILE * f = fopen("/Users/liuye/Documents/p2p/build/src/mysiprtp/Debug/r.sdp", "rb");
+    FILE * f = fopen(gOpenFile, "rb");
     assert(f != NULL);
     
     fseek(f,0, SEEK_END);
     int flen = ftell(f);
     fseek(f, 0, SEEK_SET);
     
+    memset(remoteSdpStr, 0, sizeof(remoteSdpStr));
     int rlen = fread(remoteSdpStr, 1, flen, f);
     assert(rlen == flen);
+    fclose(f);
     
     pj_pool_t * sdpRemotepool = pj_pool_create(&cp.factory, "sdpremote", 2048, 1024, NULL);
     
     pj_status_t status;
     status = pjmedia_sdp_parse(sdpRemotepool, remoteSdpStr, strlen(remoteSdpStr), sdp);
     assert(status == PJ_SUCCESS);
+    
+    char sdptxt[2048] = {0};
+    pjmedia_sdp_print(*sdp, sdptxt, sizeof(sdptxt) - 1);
+    printf("\n------------sdp from file start-----------\n");
+    printf("%s", sdptxt);
+    printf("\n------------sdp from file   end-----------\n");
 }
 
 void createOffer(pjmedia_endpt *endpt, pjmedia_transport *transport, pjmedia_sdp_session **p_sdp, pjmedia_transport_info *tinfo) {
@@ -100,9 +129,9 @@ void createOffer(pjmedia_endpt *endpt, pjmedia_transport *transport, pjmedia_sdp
     pjmedia_sdp_session *sdp = *p_sdp;
     sdp->media[sdp->media_count++] = sdpMedia;
 
-    char * sdpStr = (char *)malloc(2048);
+    char sdpStr[2048];
     memset(sdpStr, 0, 2048);
-    pjmedia_sdp_print(sdp, sdpStr, 2048);
+    pjmedia_sdp_print(sdp, sdpStr, sizeof(sdpStr));
     printf("%s\n", sdpStr);
 
     status = pjmedia_transport_media_create(transport, sdppool, 0, NULL, 0);
@@ -111,9 +140,10 @@ void createOffer(pjmedia_endpt *endpt, pjmedia_transport *transport, pjmedia_sdp
     status = pjmedia_transport_encode_sdp(transport, sdppool, sdp, NULL, 0);
     assert(status == PJ_SUCCESS);
 
-    memset(sdpStr, 0, 2048);
-    pjmedia_sdp_print(sdp, sdpStr, 2048);
+    memset(sdpStr, 0, sizeof(sdpStr));
+    pjmedia_sdp_print(sdp, sdpStr, sizeof(sdpStr));
     printf("%s\n", sdpStr);
+    write_sdp(sdpStr, strlen(sdpStr), OFFERSDP);
 }
 
 void createAnswer(pjmedia_endpt *endpt, pjmedia_transport *transport, pjmedia_sdp_session **p_sdp, pjmedia_sdp_session *offer, pjmedia_transport_info *tinfo) {
@@ -134,9 +164,9 @@ void createAnswer(pjmedia_endpt *endpt, pjmedia_transport *transport, pjmedia_sd
     pjmedia_sdp_session *sdp = *p_sdp;
     sdp->media[sdp->media_count++] = sdpMedia;
     
-    char * sdpStr = (char *)malloc(2048);
-    memset(sdpStr, 0, 2048);
-    pjmedia_sdp_print(sdp, sdpStr, 2048);
+    char sdpStr[2048];
+    memset(sdpStr, 0, sizeof(sdpStr));
+    pjmedia_sdp_print(sdp, sdpStr, sizeof(sdpStr));
     printf("%s\n", sdpStr);
     
     status = pjmedia_transport_media_create(transport, sdppool, 0, offer, 0);
@@ -145,9 +175,10 @@ void createAnswer(pjmedia_endpt *endpt, pjmedia_transport *transport, pjmedia_sd
     status = pjmedia_transport_encode_sdp(transport, sdppool, sdp, offer, 0);
     assert(status == PJ_SUCCESS);
     
-    memset(sdpStr, 0, 2048);
-    pjmedia_sdp_print(sdp, sdpStr, 2048);
+    memset(sdpStr, 0, sizeof(sdpStr));
+    pjmedia_sdp_print(sdp, sdpStr, sizeof(sdpStr));
     printf("%s\n", sdpStr);
+    write_sdp(sdpStr, strlen(sdpStr), ANSWERSDP);
 }
 
 void setLocalDescription(pjmedia_sdp_session *sdp) {
@@ -197,14 +228,17 @@ int main(int argc, char **argv) {
     pj_bzero(&g_icecfg.stun, sizeof(g_icecfg.stun));
     pj_bzero(&g_icecfg.turn, sizeof(g_icecfg.turn));
 
-    g_icecfg.stun_tp_cnt = 0;
+    //这里按照注释掉的这样写会获取host地址
+    //g_icecfg.stun_tp_cnt = 1;
     //pj_ice_strans_stun_cfg_default(&g_icecfg.stun_tp[0]);
+    //需要获取stun地址还需要配置g_icecfg.stun_tp[0]的stun服务器地址和端口
 
     pj_stun_config_init(&g_icecfg.stun_cfg, &cp.factory, 0,
         pjmedia_endpt_get_ioqueue(med_endpt), ht);
 
     g_icecfg.turn_tp_cnt = 1;
     g_icecfg.turn_tp[0].server = pj_str("123.59.204.198");
+    //g_icecfg.turn_tp[0].server = pj_str("127.0.0.1");
     g_icecfg.turn_tp[0].port = 3478;
     g_icecfg.turn_tp[0].af = pj_AF_INET();
     g_icecfg.turn_tp[0].conn_type = PJ_TURN_TP_UDP;
@@ -244,20 +278,38 @@ int main(int argc, char **argv) {
         pjmedia_sdp_session *sdp;
         createOffer(med_endpt, transport, &sdp, &tpinfo);
         setLocalDescription(sdp);
+        gOpenFile = ANSWERSDP;
         sdp_from_file(&sdp);
         setRemoteDescription(sdp);
     }
     
     if(gRole == ANSWER){
+        gOpenFile = OFFERSDP;
         pjmedia_sdp_session *rSdp, *lSdp;
         sdp_from_file(&rSdp);
+        setRemoteDescription(rSdp);
         createAnswer(med_endpt, transport, &lSdp, rSdp, &tpinfo);
         setLocalDescription(lSdp);
     }
+    
+    input_confirm("confirm to negotiation:");
 
     pj_pool_t * icenegpool = pj_pool_create(&cp.factory, "iceneg", 2048, 1024, NULL);
-    pjmedia_transport_media_start(transport, icenegpool, localSdp, remoteSdp, 0);
+    status = pjmedia_transport_media_start(transport, icenegpool, localSdp, remoteSdp, 0);
+    assert(status == PJ_SUCCESS);
+    
+    pj_thread_sleep(2000);
+    char packet[120];
+    while(1){
+        memset(packet, 0, sizeof(packet));
+        memset(packet, 0x31, 12);
+        printf("input:");
+        scanf("%s", packet+12);
+        if(packet[12] == 'q'){
+            break;
+        }
+        pjmedia_transport_send_rtp(transport, packet, strlen(packet));
+    }
    
-    printf("enter to quit");
-    scanf("%s\n", (char *)&gRole);
+    input_confirm("quit");
 }
