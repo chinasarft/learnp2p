@@ -19,7 +19,7 @@ char remoteSdpStr[2048]={0};
 #define OFFER 1
 #define ANSWER 2
 #define OFFERSDP "offer.sdp"
-#define ANSWERSDP "anser.sdp"
+#define ANSWERSDP "answer.sdp"
 int gRole = OFFER;
 char * gOpenFile = NULL;
 
@@ -237,12 +237,12 @@ int main(int argc, char **argv) {
         pjmedia_endpt_get_ioqueue(med_endpt), ht);
 
     g_icecfg.turn_tp_cnt = 1;
-    g_icecfg.turn_tp[0].server = pj_str("123.59.204.198");
-    //g_icecfg.turn_tp[0].server = pj_str("127.0.0.1");
+    pj_ice_strans_turn_cfg_default(&g_icecfg.turn_tp[0]);
+    //g_icecfg.turn_tp[0].server = pj_str("123.59.204.198");
+    g_icecfg.turn_tp[0].server = pj_str("127.0.0.1");
     g_icecfg.turn_tp[0].port = 3478;
     g_icecfg.turn_tp[0].af = pj_AF_INET();
     g_icecfg.turn_tp[0].conn_type = PJ_TURN_TP_UDP;
-    pj_turn_sock_cfg_default(&g_icecfg.turn_tp[0].cfg);
     /* end ice config start */
 
     pjmedia_ice_cb cb;
@@ -253,7 +253,7 @@ int main(int argc, char **argv) {
     cb.on_ice_complete2 = on_ice_complete2;
 
     pjmedia_transport *transport = NULL;
-    status = pjmedia_ice_create3(med_endpt, "icetest", 2, &g_icecfg,
+    status = pjmedia_ice_create3(med_endpt, "icetest", 1, &g_icecfg,
         &cb, //const pjmedia_ice_cb *cb
         0,
         med_endpt,
