@@ -14,6 +14,7 @@ pj_caching_pool cp;
 pjmedia_sdp_session * localSdp;
 pjmedia_sdp_session * remoteSdp;
 int gatheringOk = 0;
+char remoteSdpStr[2048]={0};
 
 #define OFFER 1
 #define ANSWER 2
@@ -62,8 +63,7 @@ void sdp_from_file(pjmedia_sdp_session ** sdp){
     
     char sdpfilepath[256] = {0};
     printf("input peer sdp file.(read from file):");
-    scanf("%s\n", sdpfilepath);
-    char remoteSdpStr[2048]={0};
+    scanf("%s", sdpfilepath);
     
     FILE * f = fopen(sdpfilepath, "rb");
     assert(f != NULL);
@@ -182,7 +182,7 @@ int main(int argc, char **argv) {
         }else{
             printf("input is wrong");
         }
-    }while(roleOk != 0);
+    }while(roleOk == 0);
 
     /* start ice config start */
     pj_timer_heap_t *ht = NULL;
