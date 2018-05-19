@@ -1,0 +1,154 @@
+<html>
+<head>
+  <meta charset="utf-8">
+</head>
+<body>
+  <button id="startButton" onclick="teststun()">teststun</button>
+  <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+  <script>
+    var pc,
+	sendChannel,
+	receiveChannel
+
+    function peerDataChannelAdd(event){
+	console.log("receive data channel add")
+	receiveChannel = event.channel
+	receiveChannel.onmessage = function (e){
+		console.log("receive message:", e.data)
+		//receiveChannel.value = e.data
+	}
+        receiveChannel.onopen = onReceiveChannelStataChange
+	receiveChannel.onclose = onReceiveChannelStataChange
+
+    }
+
+//----------------
+    //首先链接信令服务器
+    var ws = new WebSocket('ws://127.0.0.1:8088/ws');  
+    ws.onmessage=function(e){
+      var msg = JSON.parse(e.data)
+      console.log(msg.type, " receive------->:", e.data);  
+      //TODO 根据pc是否为null来判断这个消息是answer还是peer 的offer
+      if(msg.type == 'answer'){
+	//answer
+	pc.setRemoteDescription(msg)
+      }else if(msg.type == 'offer'){
+	//offer. need to create answer
+	pc.setRemoteDescription(msg)
+ 
+        pc.onicecandidate = function(event){
+          if (event.candidate !== null) {
+            console.log(event.candidate);
+	    ws.send(JSON.stringify({type:"ice", candidate:event.candidate}))
+          }
+        };
+
+	pc.ondatachannel = peerDataChannelAdd
+
+        pc.createAnswer(gotDescription, noDescription);
+      }else if(msg.type == 'ice'){
+      	//ice candidate
+	pc.addIceCandidate(msg.candidate)
+      }
+    };
+    ws.onerror=function(err){  
+      console.log('_error');  
+      console.log(err);  
+    };  
+    ws.onopen=function(){  
+      console.log('_connect')  
+    };  
+    ws.onclose=function(){  
+      console.log('_close');  
+    };  
+//    ws.send('data');  
+//----------------
+    
+
+    function gotDescription(desc) {
+      console.log('offer: ', desc);
+      pc.setLocalDescription(desc);//trigger connect with iceserver(onicecandidate)
+
+      //TODO 发送信令
+      ws.send(JSON.stringify(desc))
+    }
+
+    function noDescription(error) {
+      console.log('Error creating offer: ', error);
+    }
+
+    //通过html的按钮调用
+    function teststun(){
+
+      // 发送ICE候选到其他客户端
+      pc.onicecandidate = function(event){
+        if (event.candidate !== null) {
+          console.log(event.candidate);
+	  ws.send(JSON.stringify({type:"ice", candidate:event.candidate}))
+        }
+      };
+      var offerOptions = {offerToReceiveAudio: 1};
+
+      //应该是在createoffer的时候会自动去调用链接ice的服务
+      pc.createOffer(
+        offerOptions
+      ).then(
+        gotDescription,
+        noDescription
+      );
+    }
+
+    function onSendChannelStataChange(){
+	    console.log('send channel state:', sendChannel.readyState)
+	    if(sendChannel.readyState === 'open'){
+		    sendChannel.send(JSON.parse('{type:"data", msg:"xxxopen"}'))
+	    }
+    }
+    function onReceiveChannelStataChange(){
+	    console.log('receive channel state:', receiveChannel.readyState)
+    }
+
+    //#######start##############//
+    window.onload = function () {
+      var config={"iceServers":[{"urls":["stun:stun.l.google.com:19302"]}],"iceTransportPolicy":"all","iceCandidatePoolSize":"0"};
+      var constraints={"optional":[{"googIPv6":true}]};
+
+      // 创建PeerConnection实例 (参数为null则没有iceserver，即使没有stunserver和turnserver，仍可在局域网下通讯)
+      //pc = new RTCPeerConnection(config, constraints);
+      pc = new RTCPeerConnection(null, constraints);
+
+      sendChannel = pc.createDataChannel('sendDataChannel', null)
+      sendChannel.onopen = onSendChannelStataChange
+      sendChannel.onclose = onSendChannelStataChange
+	pc.ondatachannel = peerDataChannelAdd
+
+	    //可以等complete了在一次性发送candidate
+	    pc.onicegatheringstatechange = function() {
+		      let label = "Unknown";
+		      switch(pc.iceGatheringState) {
+			case "new":
+			case "complete":
+			    label = "Idle";
+			    break;
+		        case "gathering":
+		            label = "Determining route";
+		            break;
+		        }
+		      document.getElementById("iceStatus").innerHTML = label;
+	    }
+    }
+  </script>
+
+  <div style="width:30%;vertical-align:top">
+    <div>
+	    <label  id="iceStatus">init</label>
+    </div>
+    <div>
+      <video autoplay="autoplay" id="myVideo" controls muted="true" />
+    </div>
+    <div>
+      <video autoplay="autoplay" id="peerVideo" controls muted="true" />
+    </div>
+  </div>
+</body>
+</html>
