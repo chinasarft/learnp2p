@@ -13,7 +13,7 @@
 pj_caching_pool cp;
 pjmedia_sdp_session * localSdp;
 pjmedia_sdp_session * remoteSdp;
-int gatheringOk = 0;
+int iceState = 0; //1 for gathering ok. 2 for negotiation ok
 char remoteSdpStr[2048]={0};
 
 #define OFFER 1
@@ -40,13 +40,14 @@ void on_ice_complete(pjmedia_transport *tp,
     switch (op) {
         /** Initialization (candidate gathering) */
     case PJ_ICE_STRANS_OP_INIT:
-        gatheringOk = 1;
+        iceState = 1;
         printf("--->gathering candidates finish\n");
         break;
 
         /** Negotiation */
     case PJ_ICE_STRANS_OP_NEGOTIATION:
         printf("--->PJ_ICE_STRANS_OP_NEGOTIATION\n");
+        iceState = 2;
         break;
 
         /** This operation is used to report failure in keep-alive operation.
@@ -189,6 +190,23 @@ void setRemoteDescription(pjmedia_sdp_session *sdp) {
     remoteSdp = sdp;
 }
 
+static int my_ice_thread(void *arg){
+    pj_ioqueue_t * ioqueue = (pj_ioqueue_t *)arg;
+    while(1) {
+        const pj_time_val delay = {.sec = 0, .msec = 10};
+        pj_ioqueue_poll(ioqueue, &delay);
+    }
+}
+
+static int my_timer_func(void* arg) {
+    pj_timer_heap_t *ht = (pj_timer_heap_t *)arg;
+    while(1) {
+        pj_timer_heap_poll(ht, NULL);
+        pj_thread_sleep(100);
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     pj_status_t status;
     status = pj_init();
@@ -198,6 +216,7 @@ int main(int argc, char **argv) {
 
     pj_caching_pool_init(&cp, &pj_pool_factory_default_policy, 0);
 
+    //pj_log_set_level(1);
     
     pjmedia_endpt *med_endpt;
     status = pjmedia_endpt_create(&cp.factory, NULL, 1, &med_endpt);
@@ -232,9 +251,25 @@ int main(int argc, char **argv) {
     //g_icecfg.stun_tp_cnt = 1;
     //pj_ice_strans_stun_cfg_default(&g_icecfg.stun_tp[0]);
     //需要获取stun地址还需要配置g_icecfg.stun_tp[0]的stun服务器地址和端口
-
+#define NOT_USE_MEPTQ
+#ifdef NOT_USE_MEPTQ
+    pj_ioqueue_t* ioqueue;
+    pj_pool_t * ioqpool = pj_pool_create(&cp.factory, "ioqpool", 2048, 1024, NULL);
+    pj_ioqueue_create(ioqpool, 16, &ioqueue);
+    pj_stun_config_init(&g_icecfg.stun_cfg, &cp.factory, 0,
+                        ioqueue, ht);
+    pj_thread_t*         pThread;
+    pj_thread_create(ioqpool, NULL, &my_ice_thread, ioqueue, 0, 0, &pThread);
+    
+    pj_thread_t*         thThread;
+    pj_pool_t * thpool = pj_pool_create(&cp.factory, "thpool", 2048, 1024, NULL);
+    pj_thread_create(thpool, NULL, &my_timer_func, ht, 0, 0, &thThread);
+#else
     pj_stun_config_init(&g_icecfg.stun_cfg, &cp.factory, 0,
         pjmedia_endpt_get_ioqueue(med_endpt), ht);
+#endif
+    
+
 
     g_icecfg.turn_tp_cnt = 1;
     pj_ice_strans_turn_cfg_default(&g_icecfg.turn_tp[0]);
@@ -263,7 +298,7 @@ int main(int argc, char **argv) {
     
     do{
         pj_thread_sleep(1000);
-    }while(gatheringOk == 0);
+    }while(iceState == 0);
     printf("after sleep------------------\n");
     
     
@@ -271,6 +306,7 @@ int main(int argc, char **argv) {
     pjmedia_transport_info_init(&tpinfo);
     pjmedia_transport_get_info(transport, &tpinfo);
     pjmedia_transport_info_get_spc_info(&tpinfo, PJMEDIA_TRANSPORT_TYPE_ICE);
+    
     printf("after get info------------------\n");
     
 
@@ -298,7 +334,13 @@ int main(int argc, char **argv) {
     status = pjmedia_transport_media_start(transport, icenegpool, localSdp, remoteSdp, 0);
     assert(status == PJ_SUCCESS);
     
-    pj_thread_sleep(2000);
+#if 0
+    do{
+        pj_thread_sleep(1000);
+    }while(iceState != 2);
+    printf("after sleep2------------------\n");
+#endif
+
     char packet[120];
     while(1){
         memset(packet, 0, sizeof(packet));
