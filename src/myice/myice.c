@@ -13,7 +13,7 @@
 pj_caching_pool cp;
 pjmedia_sdp_session * localSdp;
 pjmedia_sdp_session * remoteSdp;
-int iceState = 0; //1 for gathering ok. 2 for negotiation ok
+int iceState = 0; //1 for gathering ok. 2 for negotiation ok. -1 for error
 char remoteSdpStr[2048]={0};
 
 #define OFFER 1
@@ -23,6 +23,10 @@ char remoteSdpStr[2048]={0};
 int gRole = OFFER;
 char * gOpenFile = NULL;
 
+void rtp_cb(void *user_data, void *pkt,pj_ssize_t l){
+    char * tmp = (char *)pkt;
+    printf("rx rtp(%d):%s\n",l, tmp);
+}
 
 void on_ice_complete2(pjmedia_transport *tp,
     pj_ice_strans_op op,
@@ -36,6 +40,10 @@ void on_ice_complete2(pjmedia_transport *tp,
 void on_ice_complete(pjmedia_transport *tp,
     pj_ice_strans_op op,
     pj_status_t status) {
+    if(status != PJ_SUCCESS){
+        iceState = -1;
+        return;
+    }
 
     switch (op) {
         /** Initialization (candidate gathering) */
@@ -299,13 +307,17 @@ int main(int argc, char **argv) {
     do{
         pj_thread_sleep(1000);
     }while(iceState == 0);
+    if(iceState < 0){
+        printf(">>>>>>>>>>>>>>>>>ice fail2<<<<<<<<<<<<<<<<<<<<\n");
+        return -1;
+    }
     printf("after sleep------------------\n");
     
     
     pjmedia_transport_info tpinfo;
     pjmedia_transport_info_init(&tpinfo);
     pjmedia_transport_get_info(transport, &tpinfo);
-    pjmedia_transport_info_get_spc_info(&tpinfo, PJMEDIA_TRANSPORT_TYPE_ICE);
+    //pjmedia_transport_info_get_spc_info(&tpinfo, PJMEDIA_TRANSPORT_TYPE_ICE);
     
     printf("after get info------------------\n");
     
@@ -334,12 +346,25 @@ int main(int argc, char **argv) {
     status = pjmedia_transport_media_start(transport, icenegpool, localSdp, remoteSdp, 0);
     assert(status == PJ_SUCCESS);
     
-#if 0
     do{
         pj_thread_sleep(1000);
-    }while(iceState != 2);
+    }while(iceState == 1);
+    if(iceState < 0){
+        printf(">>>>>>>>>>>>>>>>>ice fail2<<<<<<<<<<<<<<<<<<<<\n");
+        return -1;
+    }
     printf("after sleep2------------------\n");
-#endif
+    
+    pjmedia_transport_info_init(&tpinfo);
+    pjmedia_transport_get_info(transport, &tpinfo);
+
+    pjmedia_transport_attach(transport, NULL,
+                             &tpinfo.sock_info.rtp_addr_name,
+                             &tpinfo.sock_info.rtcp_addr_name,
+                             sizeof(tpinfo.sock_info.rtp_addr_name),
+                             rtp_cb, //void (*rtp_cb)(void *user_data, void *pkt,pj_ssize_t),
+                             NULL //void (*rtcp_cb)(void *usr_data,void*pkt,pj_ssize_t)
+                             );
 
     char packet[120];
     while(1){
