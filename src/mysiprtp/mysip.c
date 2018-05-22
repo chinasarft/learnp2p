@@ -232,7 +232,8 @@ int main(int argc, char **argv){
 #else
     uint8_t * nextstart = (uint8_t *)h264;
     uint8_t * endptr = nextstart + h264len;
-    //uint8_t * backup = NULL;// sps pps Iframe frame2
+    uint8_t * backupstart = NULL;// sps pps Iframe frame2
+    uint8_t * backupend = NULL;
 #endif
     int nextlen = h264len;
     while(status == PJ_SUCCESS)
@@ -260,8 +261,15 @@ int main(int argc, char **argv){
             int eof = 0;
             int cntNalu = 0;
             do{
-                start = (uint8_t *)ff_avc_find_startcode((const uint8_t *)nextstart, (const uint8_t *)endptr);
-                end = (uint8_t *)ff_avc_find_startcode(start+4, endptr);
+                if(backupstart){
+                    start = backupstart;
+                    end = backupend;
+                    backupstart = NULL;
+                    backupend = NULL;
+                }else{
+                    start = (uint8_t *)ff_avc_find_startcode((const uint8_t *)nextstart, (const uint8_t *)endptr);
+                    end = (uint8_t *)ff_avc_find_startcode(start+4, endptr);
+                }
                 nextstart = end;
                 if(sendp == NULL)
                     sendp = start;
@@ -289,7 +297,9 @@ int main(int argc, char **argv){
                     }else{ // pps sps sei etc
                         printf("send one video packet:%d\n", start - sendp);
                         status = librtp_put_video(&app.media_stream, (char *)sendp, start - sendp);
-                        nextstart = start;
+                        backupstart = start;
+                        backupend = end;
+                        cntNalu--;// 这次保存了起来，需要少算一次
                     }
                     break;
                 }
