@@ -11,7 +11,7 @@
         myVideoStream,
         haveLocalMedia
 
-//----------------
+//----------------信令服务处理相关
     //首先链接信令服务器
     var ws = new WebSocket('ws://127.0.0.1:8088/ws');  
     ws.onmessage=function(e){
@@ -62,7 +62,7 @@
       console.log('offer: ', desc);
       pc.setLocalDescription(desc);//trigger connect with iceserver(onicecandidate)
 
-      //TODO 发送信令
+      //发送信令 
       ws.send(JSON.stringify(desc))
     }
 
@@ -86,7 +86,6 @@
       };
       var offerOptions = {offerToReceiveAudio: 1};
 
-      //应该是在createoffer的时候会自动去调用链接ice的服务
       pc.createOffer(
         offerOptions
       ).then(
@@ -111,26 +110,29 @@
       navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia
       navigator.getUserMedia({ audio: true, video: true }, gotUserMedia, didntGetUserMedia)
 
-	    //可以等complete了在一次性发送candidate
-	    pc.onicegatheringstatechange = function() {
-		      let label = "Unknown";
-		      switch(pc.iceGatheringState) {
-			case "new":
-			case "complete":
-			    label = "Idle";
-			    break;
-		        case "gathering":
-		            label = "Determining route";
-		            break;
-		        }
-		      document.getElementById("iceStatus").innerHTML = label;
-	    }
+      //可以等complete了在一次性发送在complete状态发送candidate
+      // 目前不是这样做的; 测试下来到complete状态需要40s?
+      pc.onicegatheringstatechange = function() {
+        let label = "Unknown";
+        switch(pc.iceGatheringState) {
+      	case "new":
+      	case "complete":
+      	  label = "Idle";
+      	  break;
+        case "gathering":
+          console.log("gather candidate ok")
+          label = "Determining route";
+          break;
+        }
+        document.getElementById("iceStatus").innerHTML = label;
+      }
     }
+
     function didntGetUserMedia() {
       console.log('cound not get user media')
     }
     function gotUserMedia(stream) {
-    console.log(stream)
+      console.log(stream)
       myVideoStream = stream
       haveLocalMedia = true
       // 向我显示我的本地视频

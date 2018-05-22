@@ -5,3 +5,8 @@ server.js
 2. pair数组，只能存储两个值0 和 1
    0转发到1， 1转发到0
    每次测试都要重启server
+
+
+webrtc:
+onaddstream 被deprecated
+peerVideo.src = URL.createObjectURL(event.stream); 被deprecated
