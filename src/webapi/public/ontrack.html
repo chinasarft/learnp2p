@@ -33,6 +33,8 @@
         };
 	pc.ontrack = function(event) {
 	  console.log("callee ontrack")
+	  //https://developer.mozilla.org/en-US/docs/Web/API/URL/createObjectURL 这个方式已经deprecated
+	  //https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/onaddstream 同样deprecated
 	  peerVideo.srcObject = event.streams[0]
 
 	};
@@ -94,6 +96,7 @@
     }
 
     //#######start##############//
+    // onload完成就会展示摄像头获取的数据了
     window.onload = function () {
       var config={"iceServers":[{"urls":["stun:stun.l.google.com:19302"]}],"iceTransportPolicy":"all","iceCandidatePoolSize":"0"};
       var constraints={"optional":[{"googIPv6":true}]};
@@ -107,6 +110,21 @@
       peerVideo = document.getElementById('peerVideo')
       navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia
       navigator.getUserMedia({ audio: true, video: true }, gotUserMedia, didntGetUserMedia)
+
+	    //可以等complete了在一次性发送candidate
+	    pc.onicegatheringstatechange = function() {
+		      let label = "Unknown";
+		      switch(pc.iceGatheringState) {
+			case "new":
+			case "complete":
+			    label = "Idle";
+			    break;
+		        case "gathering":
+		            label = "Determining route";
+		            break;
+		        }
+		      document.getElementById("iceStatus").innerHTML = label;
+	    }
     }
     function didntGetUserMedia() {
       console.log('cound not get user media')
@@ -122,6 +140,9 @@
   </script>
 
   <div style="width:30%;vertical-align:top">
+    <div>
+	    <label  id="iceStatus">init</label>
+    </div>
     <div>
       <video autoplay="autoplay" id="myVideo" controls muted="true" />
     </div>
