@@ -262,7 +262,6 @@ int librtp_put_video(RtpMediaStream * strm, char * data, int dataSize){
         
         pjmedia_rtcp_tx_rtp(&strm->rtp_pair.rtcp_session, payload_len);
     }
-    pj_thread_sleep(25);
     return 0;
 }
 

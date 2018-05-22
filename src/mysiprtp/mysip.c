@@ -31,79 +31,47 @@ static struct app
     RtpMediaStream media_stream;
 } app;
 
-static char * copy_nal_from_buf(char *h264, int *h264_len, int *len)
+static const uint8_t *ff_avc_find_startcode_internal(const uint8_t *p, const uint8_t *end)
 {
-    char split[4];
-    char tmpbuf[1];
-    int splitCnt = 0;
-    int frameCnt = 0; //sps pps sei delimiter等
+    const uint8_t *a = p + 4 - ((intptr_t)p & 3);
     
-    *len = 0;
-    int cnt=0;
-    do {
-        tmpbuf[0] = h264[cnt++];
-        if (cnt >= *h264_len) {
-            if(cnt > 3)
-                goto END;
-            return NULL;
-        }
-        if (!splitCnt && tmpbuf[0] != 0x0) {
-            (*len)++;
-        } else if (!splitCnt && tmpbuf[0] == 0x0) {
-            splitCnt = 1;
-            split[0] = tmpbuf[0];
-        } else if (splitCnt) {
-            switch (splitCnt) {
-                case 1:
-                    if (tmpbuf[0] == 0x0) {
-                        splitCnt++;
-                        split[1] = tmpbuf[0];
-                    } else {
-                        splitCnt = 0;
-                    }
-                    break;
-                case 2:
-                    if (tmpbuf[0] == 0x0) {
-                        splitCnt++;
-                        split[2] = tmpbuf[0];
-                    } else if (tmpbuf[0] == 0x1) {
-                        if(cnt == 3){ //第一次的分隔符
-                            splitCnt = 0;
-                            continue;
-                        }
-                        goto END;
-                    } else if (tmpbuf[0] == 0x3) {
-                    } else {
-                        splitCnt = 0;
-                    }
-                    break;
-                case 3:
-                    if (tmpbuf[0] == 0x1) {
-                        if(cnt == 4){//第一次的分隔符
-                            splitCnt = 0;
-                            continue;
-                        }
-                        goto END;
-                    } else {
-                        splitCnt = 0;
-                        break;
-                    }
+    for (end -= 3; p < a && p < end; p++) {
+        if (p[0] == 0 && p[1] == 0 && p[2] == 1)
+            return p;
+    }
+    
+    for (end -= 3; p < end; p += 4) {
+        uint32_t x = *(const uint32_t*)p;
+        //      if ((x - 0x01000100) & (~x) & 0x80008000) // little endian
+        //      if ((x - 0x00010001) & (~x) & 0x00800080) // big endian
+        if ((x - 0x01010101) & (~x) & 0x80808080) { // generic
+            if (p[1] == 0) {
+                if (p[0] == 0 && p[2] == 1)
+                    return p;
+                if (p[2] == 0 && p[3] == 1)
+                    return p+1;
+            }
+            if (p[3] == 0) {
+                if (p[2] == 0 && p[4] == 1)
+                    return p+2;
+                if (p[4] == 0 && p[5] == 1)
+                    return p+3;
             }
         }
-        
-    } while (1);
-END:
-
-    if(splitCnt){
-        cnt = cnt - splitCnt - 1; //减去分割的delimiter
-        (*len) = cnt ;
-        *h264_len -= cnt;
-        return h264+cnt;
-    }else{
-        (*len) = cnt;
-        *h264_len -= cnt;
-        return h264+cnt;
     }
+    
+    for (end += 3; p < end; p++) {
+        if (p[0] == 0 && p[1] == 0 && p[2] == 1)
+            return p;
+    }
+    
+    return end + 3;
+}
+
+const uint8_t *ff_avc_find_startcode(const uint8_t *p, const uint8_t *end){
+    const uint8_t *out= ff_avc_find_startcode_internal(p, end);
+    if(p<out && out<end && !out[-1]) out--;
+    return out;
 }
 
 /* Init application options */
@@ -258,7 +226,14 @@ int main(int argc, char **argv){
     
     int cnt = 0;
     int aok = 1, vok = 1;
+#if 0
     char * nextstart = h264;
+    char * endptr = nextstart + h264len;
+#else
+    uint8_t * nextstart = (uint8_t *)h264;
+    uint8_t * endptr = nextstart + h264len;
+    //uint8_t * backup = NULL;// sps pps Iframe frame2
+#endif
     int nextlen = h264len;
     while(status == PJ_SUCCESS)
     {
@@ -277,46 +252,51 @@ int main(int argc, char **argv){
             }
             
         }
+
         if(vok){
-            int total = 0;
-            int frlen = 0;
-            char * tmp = NULL;
-            int tmplen = nextlen;
-            char * sendp = NULL;
+            uint8_t * start = NULL;
+            uint8_t * end = NULL;
+            uint8_t * sendp = NULL;
+            int eof = 0;
+            int cntNalu = 0;
             do{
-                frlen = 0;
-                tmp = copy_nal_from_buf(nextstart, &tmplen, &frlen);
-                if(tmp == NULL){
+                start = (uint8_t *)ff_avc_find_startcode((const uint8_t *)nextstart, (const uint8_t *)endptr);
+                end = (uint8_t *)ff_avc_find_startcode(start+4, endptr);
+                nextstart = end;
+                if(sendp == NULL)
+                    sendp = start;
+                cntNalu++;
+
+                if(start == end){
+                    eof = 1;
+                    end = endptr + 1;
+                    status = librtp_put_video(&app.media_stream, (char *)sendp, end - start);;//TODO goto send
                     break;
-                }else if(sendp == NULL){
-                    sendp = tmp;
                 }
-                if(total == 0 && frlen > 1400){
-                    total = frlen;
-                    nextstart = tmp;
-                    nextlen = tmplen;
-                    break;
-                }else if(frlen + total < 1400){
-                    total += frlen;
-                    nextstart = tmp;
-                    nextlen = tmplen;
-                    continue;
-                }else{
-                    tmp = nextstart;
+
+                int type = -1;
+                if(start[2] == 0x01){//0x 00 00 01
+                    type = start[3] & 0x1F;
+                }else{ // 0x 00 00 00 01
+                    type = start[4] & 0x1F;
+                }
+                
+                if(type == 1 || type == 5 ){
+                    if(cntNalu == 1){
+                        printf("send one video packet:%d\n", end - sendp);
+                        status = librtp_put_video(&app.media_stream, (char *)sendp, end - sendp);//TODO goto send
+                        pj_thread_sleep(40);
+                    }else{ // pps sps sei etc
+                        printf("send one video packet:%d\n", start - sendp);
+                        status = librtp_put_video(&app.media_stream, (char *)sendp, start - sendp);
+                        nextstart = start;
+                    }
                     break;
                 }
             }while(1);
-            if(tmp == NULL){
-                vok = 0;
-                continue;
-            }
             
-            //TODO send h264
-            status = librtp_put_video(&app.media_stream, sendp, total);
-            if(status != 0){
-                vok = 0;
-            }
-            printf("send one video packet:%d\n", frlen);
+            if(eof)
+                status = 1;
         }
         cnt++;
     }
