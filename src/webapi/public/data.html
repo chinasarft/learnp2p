@@ -101,7 +101,8 @@
     function onSendChannelStataChange(){
 	    console.log('send channel state:', sendChannel.readyState)
 	    if(sendChannel.readyState === 'open'){
-		    sendChannel.send(JSON.parse('{type:"data", msg:"xxxopen"}'))
+		    var sd = {type:"data", msg:"xxxopen"}
+		    sendChannel.send(JSON.stringify(sd))
 	    }
     }
     function onReceiveChannelStataChange(){
@@ -114,8 +115,7 @@
       var constraints={"optional":[{"googIPv6":true}]};
 
       // 创建PeerConnection实例 (参数为null则没有iceserver，即使没有stunserver和turnserver，仍可在局域网下通讯)
-      //pc = new RTCPeerConnection(config, constraints);
-      pc = new RTCPeerConnection(null, constraints);
+      pc = new RTCPeerConnection(config, constraints);
 
       sendChannel = pc.createDataChannel('sendDataChannel', null)
       sendChannel.onopen = onSendChannelStataChange
