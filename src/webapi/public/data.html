@@ -9,6 +9,20 @@
     var pc,
 	sendChannel,
 	receiveChannel
+    var iceCandidates = {type:"ice", candidates:[]}
+    var who = "offer"
+
+    function onSendChannelStataChange(){
+	    console.log('send channel state:', sendChannel.readyState)
+	    if(sendChannel.readyState === 'open'){
+		    var sd = {type:"data", msg: who}
+		    sendChannel.send(JSON.stringify(sd))
+	    }
+    }
+
+    function onReceiveChannelStataChange(){
+	    console.log('receive channel state:', receiveChannel.readyState)
+    }
 
     function peerDataChannelAdd(event){
 	console.log("receive data channel add")
@@ -22,6 +36,49 @@
 
     }
 
+    function getOneIceCanidate(event){
+          if (event.candidate !== null) {
+            console.log(event.candidate)
+	    iceCandidates.candidates.push(event.candidate)
+          }
+    }
+
+    //可以等complete了在一次性发送candidate
+    function iceStateChange() {
+      let label = "Unknown";
+      switch(pc.iceGatheringState) {
+	case "new":
+	    label = "Idle";
+	    break;
+	case "complete":
+	    label = "complete";
+	    ws.send(JSON.stringify(iceCandidates))
+	    break;
+        case "gathering":
+            label = "Determining route";
+            break;
+        }
+      document.getElementById("iceStatus").innerHTML = label;
+     }
+
+     function setEventHandler(){
+        pc.onicecandidate = getOneIceCanidate
+	pc.ondatachannel = peerDataChannelAdd
+        pc.onicegatheringstatechange = iceStateChange
+     }
+
+    function gotDescription(desc) {
+      console.log('offer: ', desc);
+      pc.setLocalDescription(desc);//trigger connect with iceserver(onicecandidate)
+
+      //发送信令
+      ws.send(JSON.stringify(desc))
+    }
+
+    function noDescription(error) {
+      console.log('Error creating offer: ', error);
+    }
+
 //----------------
     //首先链接信令服务器
     var ws = new WebSocket('ws://127.0.0.1:8088/ws');  
@@ -33,22 +90,17 @@
 	//answer
 	pc.setRemoteDescription(msg)
       }else if(msg.type == 'offer'){
+        who = "answer"
 	//offer. need to create answer
 	pc.setRemoteDescription(msg)
  
-        pc.onicecandidate = function(event){
-          if (event.candidate !== null) {
-            console.log(event.candidate);
-	    ws.send(JSON.stringify({type:"ice", candidate:event.candidate}))
-          }
-        };
-
-	pc.ondatachannel = peerDataChannelAdd
+	setEventHandler()
 
         pc.createAnswer(gotDescription, noDescription);
       }else if(msg.type == 'ice'){
       	//ice candidate
-	pc.addIceCandidate(msg.candidate)
+	for(i = 0; i < msg.candidates.length; i++)
+	  pc.addIceCandidate(msg.candidates[i])
       }
     };
     ws.onerror=function(err){  
@@ -65,28 +117,9 @@
 //----------------
     
 
-    function gotDescription(desc) {
-      console.log('offer: ', desc);
-      pc.setLocalDescription(desc);//trigger connect with iceserver(onicecandidate)
-
-      //TODO 发送信令
-      ws.send(JSON.stringify(desc))
-    }
-
-    function noDescription(error) {
-      console.log('Error creating offer: ', error);
-    }
-
     //通过html的按钮调用
     function teststun(){
 
-      // 发送ICE候选到其他客户端
-      pc.onicecandidate = function(event){
-        if (event.candidate !== null) {
-          console.log(event.candidate);
-	  ws.send(JSON.stringify({type:"ice", candidate:event.candidate}))
-        }
-      };
       var offerOptions = {offerToReceiveAudio: 1};
 
       //应该是在createoffer的时候会自动去调用链接ice的服务
@@ -96,17 +129,6 @@
         gotDescription,
         noDescription
       );
-    }
-
-    function onSendChannelStataChange(){
-	    console.log('send channel state:', sendChannel.readyState)
-	    if(sendChannel.readyState === 'open'){
-		    var sd = {type:"data", msg:"xxxopen"}
-		    sendChannel.send(JSON.stringify(sd))
-	    }
-    }
-    function onReceiveChannelStataChange(){
-	    console.log('receive channel state:', receiveChannel.readyState)
     }
 
     //#######start##############//
@@ -120,22 +142,8 @@
       sendChannel = pc.createDataChannel('sendDataChannel', null)
       sendChannel.onopen = onSendChannelStataChange
       sendChannel.onclose = onSendChannelStataChange
-	pc.ondatachannel = peerDataChannelAdd
 
-	    //可以等complete了在一次性发送candidate
-	    pc.onicegatheringstatechange = function() {
-		      let label = "Unknown";
-		      switch(pc.iceGatheringState) {
-			case "new":
-			case "complete":
-			    label = "Idle";
-			    break;
-		        case "gathering":
-		            label = "Determining route";
-		            break;
-		        }
-		      document.getElementById("iceStatus").innerHTML = label;
-	    }
+      setEventHandler()
     }
   </script>
 

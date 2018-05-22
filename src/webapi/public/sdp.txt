@@ -1,0 +1,1 @@
+ffmpeg -fflags +genpts -re -i lzc67hd.mp4 -an -vcodec copy -f rtp rtp://<IP>:5004 -vn -acodec copy -f rtp rtp://<IP>:5005 > test.sdp 

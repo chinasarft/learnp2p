@@ -108,6 +108,21 @@
       peerVideo = document.getElementById('peerVideo')
       navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia
       navigator.getUserMedia({ audio: true, video: true }, gotUserMedia, didntGetUserMedia)
+
+	    //可以等complete了在一次性发送candidate
+	    pc.onicegatheringstatechange = function() {
+		      let label = "Unknown";
+		      switch(pc.iceGatheringState) {
+			case "new":
+			case "complete":
+			    label = "Idle";
+			    break;
+		        case "gathering":
+		            label = "Determining route";
+		            break;
+		        }
+		      document.getElementById("iceStatus").innerHTML = label;
+	    }
     }
     function didntGetUserMedia() {
       console.log('cound not get user media')
@@ -123,6 +138,9 @@
   </script>
 
   <div style="width:30%;vertical-align:top">
+    <div>
+	    <label  id="iceStatus">init</label>
+    </div>
     <div>
       <video autoplay="autoplay" id="myVideo" controls muted="true" />
     </div>
