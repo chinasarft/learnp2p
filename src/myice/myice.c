@@ -281,11 +281,19 @@ int main(int argc, char **argv) {
 
     g_icecfg.turn_tp_cnt = 1;
     pj_ice_strans_turn_cfg_default(&g_icecfg.turn_tp[0]);
-    //g_icecfg.turn_tp[0].server = pj_str("123.59.204.198");
-    g_icecfg.turn_tp[0].server = pj_str("127.0.0.1");
+    g_icecfg.turn_tp[0].server = pj_str("123.59.204.198");
+    //g_icecfg.turn_tp[0].server = pj_str("127.0.0.1");
     g_icecfg.turn_tp[0].port = 3478;
     g_icecfg.turn_tp[0].af = pj_AF_INET();
     g_icecfg.turn_tp[0].conn_type = PJ_TURN_TP_UDP;
+    
+    //optional auth
+    /*
+    g_icecfg.turn_tp[0].auth_cred.type = PJ_STUN_AUTH_CRED_STATIC;
+    g_icecfg.turn_tp[0].auth_cred.data.static_cred.username = pj_str("root");
+    g_icecfg.turn_tp[0].auth_cred.data.static_cred.data_type = PJ_STUN_PASSWD_PLAIN;
+    g_icecfg.turn_tp[0].auth_cred.data.static_cred.data = pj_str("root");
+    */
     /* end ice config start */
 
     pjmedia_ice_cb cb;
