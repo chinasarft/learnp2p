@@ -33,13 +33,6 @@ void on_ice_complete2(pjmedia_transport *tp,
     pj_status_t status,
     void *user_data) {
 
-    printf("------------------------------------------------------>on_ice_complete2\n");
-
-}
-
-void on_ice_complete(pjmedia_transport *tp,
-    pj_ice_strans_op op,
-    pj_status_t status) {
     if(status != PJ_SUCCESS){
         iceState = -1;
         return;
@@ -300,7 +293,7 @@ int main(int argc, char **argv) {
     // 注释有点非常误导或者本来就是错的
     // on_ice_complete2 说：如果这个两个回调都有，只有这个才回调
     // 但是实际上是两个都会回调，只有在特定条件下(可能是ice协商成公)才只回调2函数
-    cb.on_ice_complete = on_ice_complete;
+    cb.on_ice_complete = NULL;
     cb.on_ice_complete2 = on_ice_complete2;
 
     pjmedia_transport *transport = NULL;
@@ -309,6 +302,7 @@ int main(int argc, char **argv) {
         0,
         med_endpt,
         &transport);
+    pjmedia_ice_add_ice_cb(transport, &cb, med_endpt);
     printf("after create3------------------\n");
 
     
