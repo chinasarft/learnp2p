@@ -1,0 +1,2 @@
+pjmedia_stream可以直接写到网络上去，
+跟踪了下代码，发现，一定要经过codec编解码，所以无法直接使用pjmedia_stream传递已编码数据
