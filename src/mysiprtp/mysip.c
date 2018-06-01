@@ -232,8 +232,6 @@ int main(int argc, char **argv){
 #else
     uint8_t * nextstart = (uint8_t *)h264;
     uint8_t * endptr = nextstart + h264len;
-    uint8_t * backupstart = NULL;// sps pps Iframe frame2
-    uint8_t * backupend = NULL;
 #endif
     int nextlen = h264len;
     while(status == PJ_SUCCESS)
@@ -259,21 +257,13 @@ int main(int argc, char **argv){
             uint8_t * end = NULL;
             uint8_t * sendp = NULL;
             int eof = 0;
-            int cntNalu = 0;
             do{
-                if(backupstart){
-                    start = backupstart;
-                    end = backupend;
-                    backupstart = NULL;
-                    backupend = NULL;
-                }else{
-                    start = (uint8_t *)ff_avc_find_startcode((const uint8_t *)nextstart, (const uint8_t *)endptr);
-                    end = (uint8_t *)ff_avc_find_startcode(start+4, endptr);
-                }
+                start = (uint8_t *)ff_avc_find_startcode((const uint8_t *)nextstart, (const uint8_t *)endptr);
+                end = (uint8_t *)ff_avc_find_startcode(start+4, endptr);
+
                 nextstart = end;
                 if(sendp == NULL)
                     sendp = start;
-                cntNalu++;
 
                 if(start == end){
                     eof = 1;
@@ -290,18 +280,10 @@ int main(int argc, char **argv){
                 }
                 
                 if(type == 1 || type == 5 ){
-                    if(cntNalu == 1){
-                        printf("send one video packet:%d\n", end - sendp);
+                        printf("send one video packet:%ld\n", end - sendp);
                         status = librtp_put_video(&app.media_stream, (char *)sendp, end - sendp);//TODO goto send
                         pj_thread_sleep(40);
-                    }else{ // pps sps sei etc
-                        printf("send one video packet:%d\n", start - sendp);
-                        status = librtp_put_video(&app.media_stream, (char *)sendp, start - sendp);
-                        backupstart = start;
-                        backupend = end;
-                        cntNalu--;// 这次保存了起来，需要少算一次
-                    }
-                    break;
+                        break;
                 }
             }while(1);
             
