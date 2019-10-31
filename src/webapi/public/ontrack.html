@@ -1,66 +1,74 @@
 <html>
+
 <head>
   <meta charset="utf-8">
 </head>
+
 <body>
   <button id="startButton" onclick="teststun()">teststun</button>
   <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
   <script>
     var pc,
-        myVideo,
-        myVideoStream,
-        haveLocalMedia
+      myVideo,
+      myVideoStream,
+      haveLocalMedia
 
-//----------------信令服务处理相关
+    //----------------信令服务处理相关
     //首先链接信令服务器
-    var ws = new WebSocket('ws://127.0.0.1:8088/ws');  
-    ws.onmessage=function(e){
+    var ws = new WebSocket('ws://127.0.0.1:8088/ws');
+    ws.onmessage = function (e) {
       var msg = JSON.parse(e.data)
-      console.log(msg.type, " receive------->:", e.data);  
+      console.log(msg.type, " receive------->:", e.data);
       //TODO 根据pc是否为null来判断这个消息是answer还是peer 的offer
-      if(msg.type == 'answer'){
-	//answer
-	pc.setRemoteDescription(msg)
-      }else if(msg.type == 'offer'){
-	//offer. need to create answer
-	pc.setRemoteDescription(msg)
- 
-        pc.onicecandidate = function(event){
+      if (msg.type == 'answer') {
+        //answer
+        pc.setRemoteDescription(msg)
+      } else if (msg.type == 'offer') {
+        //offer. need to create answer
+        pc.setRemoteDescription(msg)
+
+        pc.onicecandidate = function (event) {
           if (event.candidate !== null) {
             console.log(event.candidate);
-	    ws.send(JSON.stringify({type:"ice", candidate:event.candidate}))
+            ws.send(JSON.stringify({ type: "ice", candidate: event.candidate }))
           }
         };
-	pc.ontrack = function(event) {
-	  console.log("callee ontrack")
-	  //https://developer.mozilla.org/en-US/docs/Web/API/URL/createObjectURL 这个方式已经deprecated
-	  //https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/onaddstream 同样deprecated
-	  peerVideo.srcObject = event.streams[0]
+        pc.ontrack = function (event) {
+          console.log("callee ontrack")
+          //https://developer.mozilla.org/en-US/docs/Web/API/URL/createObjectURL 这个方式已经deprecated
+          //https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/onaddstream 同样deprecated
+          peerVideo.srcObject = event.streams[0]
 
-	};
+        };
         pc.createAnswer(gotDescription, noDescription);
-      }else if(msg.type == 'ice'){
-      	//ice candidate
-	pc.addIceCandidate(msg.candidate)
+      } else if (msg.type == 'ice') {
+        //ice candidate
+        pc.addIceCandidate(msg.candidate)
       }
     };
-    ws.onerror=function(err){  
-      console.log('_error');  
-      console.log(err);  
-    };  
-    ws.onopen=function(){  
-      console.log('_connect')  
-    };  
-    ws.onclose=function(){  
-      console.log('_close');  
-    };  
-//    ws.send('data');  
-//----------------
-    
+    ws.onerror = function (err) {
+      console.log('_error');
+      console.log(err);
+    };
+    ws.onopen = function () {
+      console.log('_connect')
+    };
+    ws.onclose = function () {
+      console.log('_close');
+    };
+    //    ws.send('data');  
+    //----------------
+
 
     function gotDescription(desc) {
       console.log('offer: ', desc);
-      pc.setLocalDescription(desc);//trigger connect with iceserver(onicecandidate)
+      // setLocalDescription返回一个promise，在localDescription修改的时候
+      // 会resolve, 比如最常见的就是candidate来了，所以then里面相比第一次createOffer
+      // sdp的变化就是加了candidate
+      pc.setLocalDescription(desc).then(r=>{
+        console.log("local desc cheange:");
+        console.log(pc.localDescripton);
+      });//trigger connect with iceserver(onicecandidate)
 
       //发送信令 
       ws.send(JSON.stringify(desc))
@@ -71,20 +79,20 @@
     }
 
     //通过html的按钮调用
-    function teststun(){
+    function teststun() {
 
       // 发送ICE候选到其他客户端
-      pc.onicecandidate = function(event){
+      pc.onicecandidate = function (event) {
         if (event.candidate !== null) {
           console.log(event.candidate);
-	  ws.send(JSON.stringify({type:"ice", candidate:event.candidate}))
+          ws.send(JSON.stringify({ type: "ice", candidate: event.candidate }))
         }
       };
-      pc.ontrack = function(event) {
-	console.log("caller ontrack")
-	peerVideo.srcObject = event.streams[0]
+      pc.ontrack = function (event) {
+        console.log("caller ontrack")
+        peerVideo.srcObject = event.streams[0]
       };
-      var offerOptions = {offerToReceiveAudio: 1};
+      var offerOptions = { offerToReceiveAudio: 1 };
 
       pc.createOffer(
         offerOptions
@@ -97,8 +105,8 @@
     //#######start##############//
     // onload完成就会展示摄像头获取的数据了
     window.onload = function () {
-      var config={"iceServers":[{"urls":["stun:stun.l.google.com:19302"]}],"iceTransportPolicy":"all","iceCandidatePoolSize":"0"};
-      var constraints={"optional":[{"googIPv6":true}]};
+      var config = { "iceServers": [{ "urls": ["stun:stun.l.google.com:19302"] }], "iceTransportPolicy": "all", "iceCandidatePoolSize": "0" };
+      var constraints = { "optional": [{ "googIPv6": true }] };
       //{"urls": "stun:stun.xten.com" },
       //{"urls": "stun:stun.freeswitch.org"}
 
@@ -112,19 +120,20 @@
 
       //可以等complete了在一次性发送在complete状态发送candidate
       // 目前不是这样做的; 测试下来到complete状态需要40s?
-      pc.onicegatheringstatechange = function() {
+      pc.onicegatheringstatechange = function () {
         let label = "Unknown";
-        switch(pc.iceGatheringState) {
-      	case "new":
-      	case "complete":
-      	  label = "Idle";
-      	  break;
-        case "gathering":
-          console.log("gather candidate ok")
-          label = "Determining route";
-          break;
+        switch (pc.iceGatheringState) {
+          case "new":
+          case "complete":
+            console.log("gather candidate ok", pc.iceGatheringState)
+            label = "Idle";
+            break;
+          case "gathering":
+            console.log("gathering candidate ok")
+            label = "Determining route";
+            break;
         }
-        document.getElementById("iceStatus").innerHTML = label;
+        document.getElementById("iceStatus").innerHTML += label;
       }
     }
 
@@ -143,7 +152,7 @@
 
   <div style="width:30%;vertical-align:top">
     <div>
-	    <label  id="iceStatus">init</label>
+      <label id="iceStatus">init</label>
     </div>
     <div>
       <video autoplay="autoplay" id="myVideo" controls muted="true" />
@@ -153,4 +162,5 @@
     </div>
   </div>
 </body>
+
 </html>
